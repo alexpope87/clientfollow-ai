@@ -27,11 +27,10 @@ for (const item of draftItems) {
   }
   // An empty object is the placeholder produced by Always Output Data.
   if (Object.keys(draft).length === 0) continue;
-  if (typeof draft.status !== 'string' || !draft.status.trim()) {
-    throw new Error('Draft status is missing. Read quote_id and status from Supabase.');
-  }
+  // Any existing draft blocks the quote, regardless of status.
+  // A missing or invalid quote_id stops execution rather than risking duplicates.
   const key = idKey(draft.quote_id);
-  if (draft.status === 'pending_approval') blockedIds.add(key);
+  blockedIds.add(key);
 }
 
 const results = [];
