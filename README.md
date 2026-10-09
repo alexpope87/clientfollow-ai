@@ -29,6 +29,26 @@ Read all relevant drafts with **Return All**, including `quote_id`, without filt
 
 Download [`clientfollow-workflow-public.json`](clientfollow-workflow-public.json). In the n8n editor, open the workflow menu, choose **Import from File**, and select the downloaded JSON. Configure your own **Supabase** and **Google Gemini** credentials on the imported nodes, verify the selected model and database tables, then test the workflow manually. The export contains no credential references or pinned data and is inactive by default.
 
+## Screenshots
+
+Demonstration screenshots use fictional client and quote data.
+
+**Dashboard**
+
+![ClientFollow AI dashboard](screenshots/dashboard.png)
+
+**Follow-up drafts**
+
+![Follow-up drafts and statuses](screenshots/drafts.png)
+
+**Approval review**
+
+![Draft approval review](screenshots/approval.png)
+
+**n8n workflow**
+
+![ClientFollow AI n8n workflow](screenshots/workflow.png)
+
 ## Validation
 
 The latest successful n8n Cloud test read **6 quotes**: **3** qualified for follow-up and **3** existing drafts covered those quotes. The duplicate filter returned **0 new follow-ups**, so **Gemini was not executed**. This result was confirmed by the project owner.
