@@ -1,0 +1,233 @@
+{
+  "name": "ClientFollow AI",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "name": "When clicking ‘Execute workflow’",
+      "id": "4ffa93c1-74ba-48ff-81b1-5e5e6cf1d403"
+    },
+    {
+      "parameters": {
+        "jsCode": "// n8n Code node: JavaScript, Run Once for All Items.\n\nconst SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;\n\n// Select pending quotes sent at least seven full days ago, without changing the list.\nfunction findQuotesForFollowUp(quotes, now = new Date()) {\n  const referenceTime = new Date(now).getTime();\n  if (!Number.isFinite(referenceTime)) throw new TypeError('now must be a valid date');\n\n  return quotes.filter((quote) => {\n    if (quote.status !== 'pending') return false;\n\n    // Use ISO strings with a timezone. Missing or invalid dates are ignored.\n    const sentTime = typeof quote.sentAt === 'string'\n      ? new Date(quote.sentAt).getTime()\n      : NaN;\n\n    return Number.isFinite(sentTime)\n      && referenceTime - sentTime >= SEVEN_DAYS_MS;\n  });\n}\n\n// Read the records returned by the previous Supabase node.\nconst quotes = $input.all().map(item => item.json);\n\n// Use the current date and time when the workflow runs.\nconst results = findQuotesForFollowUp(quotes, new Date());\n\nreturn results.map(quote => ({ json: quote }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ],
+      "name": "Code in JavaScript",
+      "id": "9220c413-0160-4cf8-9aed-f8b6f18d2266"
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "quotes",
+        "returnAll": true
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        224,
+        0
+      ],
+      "name": "Get many rows",
+      "id": "f447aaa4-609b-4f82-a5a0-c4ad9edbc09a"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-3.5-flash",
+          "mode": "list",
+          "cachedResultName": "models/gemini-3.5-flash"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=\nSei un assistente commerciale per una piccola impresa italiana.\n\nPrepara un'email di follow-up breve, professionale e cortese per un cliente che non ha risposto a un preventivo.\n\nDati del preventivo:\nID: {{ $json.id }}\nCliente: {{ $json.clientName }}\nImporto: €{{ $json.amount }}\nData invio: {{ $json.sentAt }}\nStato: {{ $json.status }}\n\nREGOLE:\n- Scrivi in italiano, con massimo 80 parole nel corpo.\n- Non inventare prodotti, servizi, sconti, accordi o scadenze.\n- Non affermare che il cliente abbia letto il preventivo.\n- Non inviare email.\n- Non inserire firme inventate.\n\nRestituisci esclusivamente un oggetto JSON valido, senza commenti o blocchi Markdown, con queste proprietà:\n\n{\n  \"quote_id\": {{ JSON.stringify($json.id) }},\n  \"email_subject\": \"Oggetto dell'email\",\n  \"email_body\": \"Corpo completo dell'email\"\n}\n\nCopia quote_id esattamente dal preventivo ricevuto.\nScrivi oggetto e corpo come stringhe JSON.\n  "
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        1120,
+        0
+      ],
+      "name": "Message a model",
+      "id": "3929ed98-2246-4810-be3b-91700ab7866a"
+    },
+    {
+      "parameters": {
+        "jsCode": "// n8n Code node: JavaScript, Run Once for All Items.\n// Set this to the exact name of the Code node BEFORE Gemini.\nconst QUOTES_NODE_NAME = 'Filter Duplicates';\nconst drafts = [];\nconst seenQuoteIds = new Set();\n\nfunction validId(value) {\n  return (typeof value === 'string' && value.trim().length > 0)\n    || (typeof value === 'number' && Number.isSafeInteger(value));\n}\n\nconst items = $input.all();\nfor (let index = 0; index < items.length; index++) {\n  const text = items[index].json?.content?.parts?.[0]?.text;\n  if (typeof text !== 'string' || !text.trim()) {\n    console.warn(`Skipped Gemini item ${index}: empty response.`);\n    continue;\n  }\n\n  // Accept plain JSON or a single Markdown JSON code block.\n  let jsonText = text.trim();\n  const fenced = jsonText.match(/^```(?:json)?\\s*\\n?([\\s\\S]*?)\\n?```$/i);\n  if (fenced) jsonText = fenced[1].trim();\n\n  let generated;\n  try {\n    generated = JSON.parse(jsonText);\n  } catch {\n    console.warn(`Skipped Gemini item ${index}: expected JSON.`);\n    continue;\n  }\n\n  if (!generated || Array.isArray(generated)\n      || !validId(generated.quote_id)\n      || typeof generated.email_subject !== 'string'\n      || typeof generated.email_body !== 'string'\n      || !generated.email_subject.trim()\n      || !generated.email_body.trim()\n      || /[\\r\\n]/.test(generated.email_subject.trim())) {\n    console.warn(`Skipped Gemini item ${index}: incomplete or invalid draft.`);\n    continue;\n  }\n\n  // itemMatching follows n8n's item links; it does NOT zip items by position.\n  let quote;\n  try {\n    quote = $(QUOTES_NODE_NAME).itemMatching(index).json;\n  } catch {\n    console.warn(`Skipped Gemini item ${index}: original quote link unavailable.`);\n    continue;\n  }\n\n  if (!validId(quote?.id)\n      || String(generated.quote_id) !== String(quote.id)\n      || quote.status !== 'pending') {\n    console.warn(`Skipped Gemini item ${index}: quote ID mismatch or non-pending quote.`);\n    continue;\n  }\n\n  const quoteKey = String(quote.id);\n  if (seenQuoteIds.has(quoteKey)) {\n    console.warn(`Skipped Gemini item ${index}: duplicate quote in this execution.`);\n    continue;\n  }\n  seenQuoteIds.add(quoteKey);\n\n  drafts.push({\n    json: {\n      quote_id: quote.id,\n      email_subject: generated.email_subject.trim(),\n      email_body: generated.email_body.trim(),\n      status: 'pending_approval',\n    },\n    pairedItem: { item: index },\n  });\n}\n\nreturn drafts;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1488,
+        0
+      ],
+      "name": "Code in JavaScript1",
+      "id": "0ca73704-8fd2-483e-bfcd-5b82751e9958"
+    },
+    {
+      "parameters": {
+        "tableId": "followup_drafts",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "quote_id",
+              "fieldValue": "={{ $json.quote_id }}"
+            },
+            {
+              "fieldId": "=email_subject",
+              "fieldValue": "={{ $json.email_subject }}"
+            },
+            {
+              "fieldId": "=email_body",
+              "fieldValue": "={{ $json.email_body }}"
+            },
+            {
+              "fieldId": "=status",
+              "fieldValue": "={{ $json.status }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        1712,
+        0
+      ],
+      "name": "Create a row",
+      "onError": "continueErrorOutput",
+      "id": "ab6d233d-8550-4994-9672-19852b0b3dcf"
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "followup_drafts",
+        "returnAll": true
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        672,
+        0
+      ],
+      "name": "Get many rows1",
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "id": "b68c16d7-110a-42e8-ab0c-c5c6d0bfd57d"
+    },
+    {
+      "parameters": {
+        "jsCode": "// n8n Code node: JavaScript, Run Once for All Items.\n// This must exactly match the first Code node's name in your workflow.\nconst QUOTES_NODE_NAME = 'Code in JavaScript';\n\nfunction idKey(value) {\n  if (typeof value === 'string' && value.trim()) return value;\n  if (typeof value === 'number' && Number.isSafeInteger(value)) return String(value);\n  throw new Error('Missing or invalid quote ID. Check the node output.');\n}\n\nlet quoteItems;\ntry {\n  quoteItems = $(QUOTES_NODE_NAME).all();\n} catch {\n  throw new Error(`Cannot read node \"${QUOTES_NODE_NAME}\". Check its exact name and execute it first.`);\n}\n\n// The immediately preceding node must read followup_drafts successfully.\n// Enable Always Output Data on that Supabase node for zero rows.\nconst draftItems = $input.all();\nconst blockedIds = new Set();\n\nfor (const item of draftItems) {\n  const draft = item.json;\n  if (!draft || typeof draft !== 'object' || Array.isArray(draft)) {\n    throw new Error('Invalid followup_drafts output. Stop and check the Supabase node.');\n  }\n\n  // An empty object is the placeholder produced by Always Output Data.\n  if (Object.keys(draft).length === 0) continue;\n\n  // Any existing draft blocks the quote, regardless of status.\n  // A missing or invalid quote_id stops execution rather than risking duplicates.\n  const key = idKey(draft.quote_id);\n  blockedIds.add(key);\n}\n\nconst results = [];\nconst seenIds = new Set();\n\nfor (const item of quoteItems) {\n  const quote = item.json;\n  const key = idKey(quote?.id);\n\n  if (blockedIds.has(key) || seenIds.has(key)) continue;\n\n  seenIds.add(key);\n  results.push({ json: quote });\n}\n\n// These are quote records, not the draft items from our immediate input.\n// After Gemini, use itemMatching against THIS filter node, not the first Code.\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        0
+      ],
+      "name": "Filter Duplicates",
+      "id": "7d9f3772-b4b0-452f-8070-9ba2068eda0c"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Get many rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get many rows": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Get many rows1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message a model": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "Create a row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get many rows1": {
+      "main": [
+        [
+          {
+            "node": "Filter Duplicates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Duplicates": {
+      "main": [
+        [
+          {
+            "node": "Message a model",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  }
+}

@@ -25,6 +25,10 @@ Paste each n8n script into a JavaScript Code node in **Run Once for All Items** 
 
 Read all relevant drafts with **Return All**, including `quote_id`, without filtering by status. On the drafts lookup, enable **Execute Once** and **Always Output Data**, and use **Stop Workflow** on errors. Leave Always Output Data disabled on the duplicate filter. Ask Gemini for JSON containing `quote_id`, `email_subject`, and `email_body`; preserve item links through Gemini for ID validation. Store credentials in n8n credential settings, never in source files.
 
+## n8n Workflow
+
+Download [`clientfollow-workflow-public.json`](clientfollow-workflow-public.json). In the n8n editor, open the workflow menu, choose **Import from File**, and select the downloaded JSON. Configure your own **Supabase** and **Google Gemini** credentials on the imported nodes, verify the selected model and database tables, then test the workflow manually. The export contains no credential references or pinned data and is inactive by default.
+
 ## Validation
 
 The latest successful n8n Cloud test read **6 quotes**: **3** qualified for follow-up and **3** existing drafts covered those quotes. The duplicate filter returned **0 new follow-ups**, so **Gemini was not executed**. This result was confirmed by the project owner.
@@ -36,4 +40,4 @@ npm test
 npm start
 ```
 
-The repository contains scripts rather than a complete workflow export. Cloud services require separately configured accounts. Duplicate filtering checks visible existing rows; concurrent executions can still create duplicates without a database uniqueness constraint or transactional safeguard.
+The repository includes JavaScript scripts and a sanitized n8n workflow export. Cloud services require separately configured accounts. Duplicate filtering checks visible existing rows; concurrent executions can still create duplicates without a database uniqueness constraint or transactional safeguard.
